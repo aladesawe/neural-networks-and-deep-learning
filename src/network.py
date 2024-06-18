@@ -59,11 +59,40 @@ class Network(object):
                 training_data[k:k+mini_batch_size]
                 for k in range(0, n, mini_batch_size)]
             for mini_batch in mini_batches:
-                self.update_mini_batch(mini_batch, eta)
+                self.update_mini_batch_matrix_compute(mini_batch, eta)
             if test_data:
                 print("Epoch {0}: {1} / {2}".format(j, self.evaluate(test_data), n_test))
             else:
                 print("Epoch {0} complete".format(j))
+
+    def apply_weight_deltas(self, nabla_b, nabla_w, mini_batch, eta):
+      """Apply the weight deltas to the weights and biases."""
+      # Ensure the deltas and weights are same shape
+      for b, nb, w, nw in zip(self.biases, nabla_b, self.weights, nabla_w):
+          assert b.shape == nb.shape
+          assert w.shape == nw.shape
+      self.weights = [w-(eta/len(mini_batch))*nw
+                        for w, nw in zip(self.weights, nabla_w)]
+      self.biases = [b-(eta/len(mini_batch))*nb
+                      for b, nb in zip(self.biases, nabla_b)]
+
+    def update_mini_batch_matrix_compute(self, mini_batch, eta):
+      """Update the network's weights and biases by applying
+      gradient descent using backpropagation to a single mini batch,
+      computing the gradient using matrix of mini batch.
+      The ``mini_batch`` is a list of tuples ``(x, y)``, and ``eta``
+      is the learning rate.
+      Observed that, for training to get at least 96% accuracy
+      recorded using the iterative mini_batch, I had to, at the very least,
+      double the learning rate, for a 3 layer network with all else the same:
+      net = Network([784, 100, 10])
+      net.SGD(list(training_data), 30, 10, 6., test_data=list(test_data))
+      """
+      # Ensure the layer counts are consistent
+      nabla_b, nabla_w = self.backprop_batch(mini_batch)
+      assert len(nabla_b) == len(self.biases)
+      assert len(nabla_w) == len(self.weights)
+      self.apply_weight_deltas(nabla_b, nabla_w, mini_batch, eta)
 
     def update_mini_batch(self, mini_batch, eta):
         """Update the network's weights and biases by applying
@@ -76,10 +105,45 @@ class Network(object):
             delta_nabla_b, delta_nabla_w = self.backprop(x, y)
             nabla_b = [nb+dnb for nb, dnb in zip(nabla_b, delta_nabla_b)]
             nabla_w = [nw+dnw for nw, dnw in zip(nabla_w, delta_nabla_w)]
-        self.weights = [w-(eta/len(mini_batch))*nw
-                        for w, nw in zip(self.weights, nabla_w)]
-        self.biases = [b-(eta/len(mini_batch))*nb
-                       for b, nb in zip(self.biases, nabla_b)]
+        self.apply_weight_deltas(nabla_b, nabla_w, mini_batch, eta)
+
+    def backprop_batch(self, mini_batch):
+      """Return a tuple ``(nabla_b, nabla_w)`` representing the \
+      gradient for the cost function C_x over the mini_batch of training examples. \
+      The function is similar to backprop, but introduces matrix of the batch entries \
+      instead of iterating over each batch entry"""
+      X = [x for x, _ in mini_batch]
+      Y = [y for _, y in mini_batch]
+      X = np.concatenate(X, axis=1)
+      Y = np.concatenate(Y, axis=1)
+
+      nabla_b = [np.zeros(b.shape) for b in self.biases]
+      nabla_w = [np.zeros(w.shape) for w in self.weights]
+      # feedforward
+      activation = X
+      activations = [X] # list to store all the activations, layer by layer
+      zs = [] # list to store all the z matrices for the batch, layer by layer
+      for b, w in zip(self.biases, self.weights):
+          z = np.dot(w, activation)+b
+          zs.append(z)
+          activation = sigmoid(z)
+          activations.append(activation)
+
+      assert activations[-1].shape == Y.shape
+      # backward pass
+      delta = self.cost_derivative(activations[-1], Y) * \
+          sigmoid_prime(zs[-1])
+      # sum the cost function over all m mini_batch entries for delta
+      nabla_b[-1] = sum_deltas_across_batch(delta)
+      nabla_w[-1] = np.dot(delta, activations[-2].transpose())
+
+      for l in range(2, self.num_layers):
+          z = zs[-l]
+          sp = sigmoid_prime(z)
+          delta = np.dot(self.weights[-l+1].transpose(), delta) * sp
+          nabla_b[-l] = sum_deltas_across_batch(delta)
+          nabla_w[-l] = np.dot(delta, activations[-l-1].transpose())
+      return (nabla_b, nabla_w)
 
     def backprop(self, x, y):
         """Return a tuple ``(nabla_b, nabla_w)`` representing the
@@ -138,3 +202,8 @@ def sigmoid(z):
 def sigmoid_prime(z):
     """Derivative of the sigmoid function."""
     return sigmoid(z)*(1-sigmoid(z))
+
+def sum_deltas_across_batch(delta):
+    """For each gradient descent value per batch, /
+    sum the cost functions entries."""
+    return np.sum(delta, axis=1).reshape(-1,1)
