@@ -42,15 +42,14 @@ def run_networks():
     training_data, validation_data, test_data = mnist_loader.load_data_wrapper()
     results = []
     for eta in LEARNING_RATES:
-        print "\nTrain a network using eta = "+str(eta)
+        print(f"\nTrain a network using eta = {eta}")
         net = network2.Network([784, 30, 10])
         results.append(
             net.SGD(training_data, NUM_EPOCHS, 10, eta, lmbda=5.0,
                     evaluation_data=validation_data, 
                     monitor_training_cost=True))
-    f = open("multiple_eta.json", "w")
-    json.dump(results, f)
-    f.close()
+    with open("multiple_eta.json", "w") as f:
+        json.dump(results, f)
 
 def make_plot():
     f = open("multiple_eta.json", "r")
