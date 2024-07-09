@@ -37,18 +37,18 @@ import gzip
 
 # Third-party libraries
 import numpy as np
-import pytensor
-import pytensor.tensor as pt
-from pytensor.tensor.random import RandomStream
-from pytensor.tensor import conv
-from pytensor.tensor.special import softmax
-from pytensor.sparse.sandbox import sp
+import aesara
+import aesara.tensor as pt
+from aesara.tensor.random import RandomStream
+from aesara.tensor.signal import conv
+from aesara.tensor.special import softmax
+from aesara.tensor.signal.pool import pool_2d
 
 
 # Activation functions for neurons
 def linear(z): return z
 def ReLU(z): return pt.maximum(0.0, z)
-from pytensor.tensor import sigmoid, tanh
+from aesara.tensor import sigmoid, tanh
 
 
 #### Constants
@@ -56,9 +56,9 @@ GPU = False
 if GPU:
     print("Trying to run under a GPU.  If this is not desired, then modify "+\
         "network3.py\nto set the GPU flag to False.")
-    try: pytensor.config.device = 'gpu'
+    try: aesara.config.device = 'gpu'
     except: pass # it's already set
-    pytensor.config.floatX = 'float32'
+    aesara.config.floatX = 'float32'
 else:
     print("Running with a CPU.  If this is not desired, then the modify "+\
         "network3.py to set\nthe GPU flag to True.")
@@ -74,10 +74,10 @@ def load_data_shared(filename="../data/mnist.pkl.gz"):
         the data to the GPU, if one is available.
 
         """
-        shared_x = pytensor.shared(
-            np.asarray(data[0], dtype=pytensor.config.floatX), borrow=True)
-        shared_y = pytensor.shared(
-            np.asarray(data[1], dtype=pytensor.config.floatX), borrow=True)
+        shared_x = aesara.shared(
+            np.asarray(data[0], dtype=aesara.config.floatX), borrow=True)
+        shared_y = aesara.shared(
+            np.asarray(data[1], dtype=aesara.config.floatX), borrow=True)
         return shared_x, pt.cast(shared_y, "int32")
     return [shared(training_data), shared(validation_data), shared(test_data)]
 
@@ -120,14 +120,14 @@ class Network(object):
         l2_norm_squared = sum([(layer.w**2).sum() for layer in self.layers])
         cost = self.layers[-1].cost(self)+\
                0.5*lmbda*l2_norm_squared/num_training_batches
-        grads = pytensor.grad(cost, self.params)
+        grads = aesara.grad(cost, self.params)
         updates = [(param, param-eta*grad)
                    for param, grad in zip(self.params, grads)]
 
         # define functions to train a mini-batch, and to compute the
         # accuracy in validation and test mini-batches.
         i = pt.lscalar() # mini-batch index
-        train_mb = pytensor.function(
+        train_mb = aesara.function(
             [i], cost, updates=updates,
             givens={
                 self.x:
@@ -135,7 +135,7 @@ class Network(object):
                 self.y:
                 training_y[i*self.mini_batch_size: (i+1)*self.mini_batch_size]
             })
-        validate_mb_accuracy = pytensor.function(
+        validate_mb_accuracy = aesara.function(
             [i], self.layers[-1].accuracy(self.y),
             givens={
                 self.x:
@@ -143,7 +143,7 @@ class Network(object):
                 self.y:
                 validation_y[i*self.mini_batch_size: (i+1)*self.mini_batch_size]
             })
-        test_mb_accuracy = pytensor.function(
+        test_mb_accuracy = aesara.function(
             [i], self.layers[-1].accuracy(self.y),
             givens={
                 self.x:
@@ -151,7 +151,7 @@ class Network(object):
                 self.y:
                 test_y[i*self.mini_batch_size: (i+1)*self.mini_batch_size]
             })
-        self.test_mb_predictions = pytensor.function(
+        self.test_mb_predictions = aesara.function(
             [i], self.layers[-1].y_out,
             givens={
                 self.x:
@@ -214,15 +214,15 @@ class ConvPoolLayer(object):
         self.activation_fn=activation_fn
         # initialize weights and biases
         n_out = (filter_shape[0]*np.prod(filter_shape[2:])/np.prod(poolsize))
-        self.w = pytensor.shared(
+        self.w = aesara.shared(
             np.asarray(
                 np.random.normal(loc=0, scale=np.sqrt(1.0/n_out), size=filter_shape),
-                dtype=pytensor.config.floatX),
+                dtype=aesara.config.floatX),
             borrow=True)
-        self.b = pytensor.shared(
+        self.b = aesara.shared(
             np.asarray(
                 np.random.normal(loc=0, scale=1.0, size=(filter_shape[0],)),
-                dtype=pytensor.config.floatX),
+                dtype=aesara.config.floatX),
             borrow=True)
         self.params = [self.w, self.b]
 
@@ -230,9 +230,9 @@ class ConvPoolLayer(object):
         self.inpt = inpt.reshape(self.image_shape)
         conv_out = conv.conv2d(
             input=self.inpt, filters=self.w, filter_shape=self.filter_shape,
-            input_shape=self.image_shape)
-        pooled_out = sp.max_pool(
-            images=conv_out, imgshp=self.image_shape, maxpoolshp=self.poolsize)
+            image_shape=self.image_shape)
+        pooled_out = pool_2d(
+            input=conv_out, ds=self.poolsize, ignore_border=True)
         self.output = self.activation_fn(
             pooled_out + self.b.dimshuffle('x', 0, 'x', 'x'))
         self.output_dropout = self.output # no dropout in the convolutional layers
@@ -245,15 +245,15 @@ class FullyConnectedLayer(object):
         self.activation_fn = activation_fn
         self.p_dropout = p_dropout
         # Initialize weights and biases
-        self.w = pytensor.shared(
+        self.w = aesara.shared(
             np.asarray(
                 np.random.normal(
                     loc=0.0, scale=np.sqrt(1.0/n_out), size=(n_in, n_out)),
-                dtype=pytensor.config.floatX),
+                dtype=aesara.config.floatX),
             name='w', borrow=True)
-        self.b = pytensor.shared(
+        self.b = aesara.shared(
             np.asarray(np.random.normal(loc=0.0, scale=1.0, size=(n_out,)),
-                       dtype=pytensor.config.floatX),
+                       dtype=aesara.config.floatX),
             name='b', borrow=True)
         self.params = [self.w, self.b]
 
@@ -278,11 +278,11 @@ class SoftmaxLayer(object):
         self.n_out = n_out
         self.p_dropout = p_dropout
         # Initialize weights and biases
-        self.w = pytensor.shared(
-            np.zeros((n_in, n_out), dtype=pytensor.config.floatX),
+        self.w = aesara.shared(
+            np.zeros((n_in, n_out), dtype=aesara.config.floatX),
             name='w', borrow=True)
-        self.b = pytensor.shared(
-            np.zeros((n_out,), dtype=pytensor.config.floatX),
+        self.b = aesara.shared(
+            np.zeros((n_out,), dtype=aesara.config.floatX),
             name='b', borrow=True)
         self.params = [self.w, self.b]
 
@@ -311,4 +311,4 @@ def size(data):
 def dropout_layer(layer, p_dropout):
     srng = RandomStream(seed=0)
     mask = srng.binomial(n=1, p=1-p_dropout, size=layer.shape)
-    return layer*pt.cast(mask, pytensor.config.floatX)
+    return layer*pt.cast(mask, aesara.config.floatX)
