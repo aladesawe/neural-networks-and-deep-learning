@@ -37,6 +37,7 @@ import gzip
 
 # Third-party libraries
 import numpy as np
+import math
 import aesara
 import aesara.tensor as pt
 from aesara.tensor.random import RandomStream
@@ -51,6 +52,10 @@ def ReLU(z): return pt.maximum(0.0, z)
 from aesara.tensor import sigmoid, tanh
 
 
+COLLAB = False
+DATA_FILENAME = "../data/mnist.pkl.gz"
+if COLLAB:
+    DATA_FILENAME = "/content/drive/MyDrive/Colab Notebooks/data/mnist.pkl.gz"
 #### Constants
 GPU = False
 if GPU:
@@ -64,7 +69,7 @@ else:
         "network3.py to set\nthe GPU flag to True.")
 
 #### Load the MNIST data
-def load_data_shared(filename="../data/mnist.pkl.gz"):
+def load_data_shared(filename=DATA_FILENAME):
     f = gzip.open(filename, 'rb')
     u = pickle._Unpickler(f, encoding='latin1')
     training_data, validation_data, test_data = u.load()
@@ -105,11 +110,16 @@ class Network(object):
         self.output_dropout = self.layers[-1].output_dropout
 
     def SGD(self, training_data, epochs, mini_batch_size, eta,
-            validation_data, test_data, lmbda=0.0):
+            validation_data, test_data, lmbda=0.0, patience=0):
         """Train the network using mini-batch stochastic gradient descent."""
         training_x, training_y = training_data
         validation_x, validation_y = validation_data
         test_x, test_y = test_data
+
+        # customary warning message
+        if epochs < patience:
+          print(f"Effective early stopping needs patience {patience} \
+to be less than number of epochs {epochs}")
 
         # compute number of minibatches for training, validation and testing
         num_training_batches = int(size(training_data)/mini_batch_size)
@@ -120,7 +130,7 @@ class Network(object):
         l2_norm_squared = sum([(layer.w**2).sum() for layer in self.layers])
         cost = self.layers[-1].cost(self)+\
                0.5*lmbda*l2_norm_squared/num_training_batches
-        grads = aesara.grad(cost, self.params)
+        grads = aesara.grad(cost, self.params)  # investigate that the function needs this signature
         updates = [(param, param-eta*grad)
                    for param, grad in zip(self.params, grads)]
 
@@ -158,7 +168,9 @@ class Network(object):
                 test_x[i*self.mini_batch_size: (i+1)*self.mini_batch_size]
             })
         # Do the actual training
+        validation_accuracies = []
         best_validation_accuracy = 0.0
+        best_epoch = 0
         for epoch in range(epochs):
             for minibatch_index in range(num_training_batches):
                 iteration = num_training_batches*epoch+minibatch_index
@@ -168,21 +180,51 @@ class Network(object):
                 if (iteration+1) % num_training_batches == 0:   # if last batch
                     validation_accuracy = np.mean(
                         [validate_mb_accuracy(j) for j in range(num_validation_batches)])
+                    validation_accuracies.append(validation_accuracy)
                     print("Epoch {0}: validation accuracy {1:.2%}".format(
                         epoch, validation_accuracy))
                     if validation_accuracy >= best_validation_accuracy:
                         print("This is the best validation accuracy to date.")
                         best_validation_accuracy = validation_accuracy
                         best_iteration = iteration
+                        best_epoch = epoch
                         if test_data:
                             test_accuracy = np.mean(
                                 [test_mb_accuracy(j) for j in range(num_test_batches)])
                             print('The corresponding test accuracy is {0:.2%}'.format(
                                 test_accuracy))
+            if patience > 0 and epoch - best_epoch >= patience:
+              print("Stopping early.")
+              break
         print("Finished training network.")
         print("Best validation accuracy of {0:.2%} obtained at iteration {1}".format(
             best_validation_accuracy, best_iteration))
         print("Corresponding test accuracy of {0:.2%}".format(test_accuracy))
+        return validation_accuracies
+    
+    def Network(self, dataset, mini_batch_size):
+        """Method to compute the accuracy on an arbitrary dataset.
+        The dataset must be a tuple x, y."""
+        if not mini_batch_size:
+            mini_batch_size = self.mini_batch_size
+        dataset_x, dataset_y = dataset
+        num_of_batches = math.ceil(size(dataset)/mini_batch_size)
+
+        i = pt.lscalar()  # mini-batch-index
+        accuracy_mb = aesara.function(
+            [i], self.layers[-1].accuracy(self.y),
+            givens={
+                self.x:
+                dataset_x[i*mini_batch_size: (i+1)*mini_batch_size],
+                self.y:
+                dataset_y[i*mini_batch_size: (i+1)*mini_batch_size]
+            }
+        )
+
+        accuracy = np.mean([accuracy_mb(b) for b in range(num_of_batches)])
+        print("Accuracy of dataset of size {0} is {1:.2%}".format(size(dataset), accuracy))
+        return accuracy
+
 
 #### Define layer types
 
