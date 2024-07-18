@@ -124,7 +124,7 @@ to be less than number of epochs {epochs}")
         # compute number of minibatches for training, validation and testing
         num_training_batches = math.ceil(size(training_data)/mini_batch_size)
         num_validation_batches = math.ceil(size(validation_data)/mini_batch_size)
-        num_test_batches = math.cel(size(test_data)/mini_batch_size)
+        num_test_batches = math.ceil(size(test_data)/mini_batch_size)
 
         # define the (regularized) cost function, symbolic gradients, and updates
         l2_norm_squared = sum([(layer.w**2).sum() for layer in self.layers])
