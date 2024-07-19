@@ -131,14 +131,16 @@ to be less than number of epochs {epochs}")
         cost = self.layers[-1].cost(self)+\
                0.5*lmbda*l2_norm_squared/num_training_batches
         grads = aesara.grad(cost, self.params)  # investigate that the function needs this signature
-        updates = [(param, param-eta*grad)
+
+        l_r = pt.dscalar()  # learning rate
+        updates = [(param, param-l_r*grad)
                    for param, grad in zip(self.params, grads)]
 
         # define functions to train a mini-batch, and to compute the
         # accuracy in validation and test mini-batches.
         i = pt.lscalar() # mini-batch index
         train_mb = aesara.function(
-            [i], cost, updates=updates,
+            [i, l_r], cost, updates=updates,
             givens={
                 self.x:
                 training_x[i*self.mini_batch_size: (i+1)*self.mini_batch_size],
@@ -176,7 +178,7 @@ to be less than number of epochs {epochs}")
                 iteration = num_training_batches*epoch+minibatch_index
                 if iteration % 1000 == 0:
                     print("Training mini-batch number {0}".format(iteration))
-                cost_ij = train_mb(minibatch_index)
+                cost_ij = train_mb(minibatch_index, eta)
                 if (iteration+1) % num_training_batches == 0:   # if last batch
                     validation_accuracy = np.mean(
                         [validate_mb_accuracy(j) for j in range(num_validation_batches)])
